@@ -1,0 +1,9 @@
+<Solution>
+  <Configurations>
+    <Platform Name="Any CPU" />
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="src/ChristmasListTracker.Client/ChristmasListTracker.Client.csproj" />
+  <Project Path="src/ChristmasListTracker/ChristmasListTracker.csproj" />
+</Solution>
