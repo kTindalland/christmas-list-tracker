@@ -3,6 +3,9 @@
 ##
 ## Get latest from `dotnet new gitignore`
 
+# tf files
+*.terraform*
+
 # dotenv files
 .env
 
