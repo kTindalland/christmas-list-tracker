@@ -1,7 +1,332 @@
-﻿@page "/"
+@page "/"
+@implements IDisposable
+@using ChristmasListTracker.Models
+@using ChristmasListTracker.Services
+@using Microsoft.AspNetCore.Components.Forms
+@inject ChristmasListService ListService
+@inject CurrentUserState CurrentUser
+@inject IJSRuntime JS
 
-<PageTitle>Home</PageTitle>
+<PageTitle>Christmas Lists</PageTitle>
 
-<h1>Hello, world!</h1>
+<main class="list-page">
+    @if (!_initialized)
+    {
+        <p class="status-message" role="status">Loading family lists...</p>
+    }
+    else if (!string.IsNullOrEmpty(_error))
+    {
+        <div class="notice notice-error" role="alert">@_error</div>
+        <button class="secondary-button" @onclick="InitializeAsync">Try again</button>
+    }
+    else if (_currentUser is null)
+    {
+        <section class="welcome-panel">
+            <p class="eyebrow">A little more Christmas magic</p>
+            <h1>Whose list are you checking?</h1>
+            @if (_users.Count == 0)
+            {
+                <p>No family members have been added to the database yet.</p>
+            }
+            else
+            {
+                <label for="user-picker">Choose your name</label>
+                <select id="user-picker" class="form-select" @onchange="SelectUserAsync">
+                    <option value="">Select a family member</option>
+                    @foreach (var user in _users)
+                    {
+                        <option value="@user.Id">@user.DisplayName</option>
+                    }
+                </select>
+                <p class="fine-print">This remembers your selection on this browser. It is not a secure login.</p>
+            }
+        </section>
+    }
+    else
+    {
+        <header class="list-heading">
+            <p class="eyebrow">Christmas wish list</p>
+            <h1>@(_selectedUser?.Id == _currentUser.Id ? "My list" : $"{_selectedUser?.DisplayName}'s list")</h1>
+            <label for="list-picker">Browse a family list</label>
+            <select id="list-picker" class="form-select" value="@_selectedListId" @onchange="SelectListAsync">
+                @foreach (var user in _users)
+                {
+                    <option value="@user.Id">@user.DisplayName</option>
+                }
+            </select>
+        </header>
 
-Welcome to your new app.
+        @if (!string.IsNullOrEmpty(_notice))
+        {
+            <div class="notice @(_noticeIsError ? "notice-error" : "notice-success")" role="status">@_notice</div>
+        }
+
+        @if (_loadingList)
+        {
+            <p class="status-message" role="status">Loading this list...</p>
+        }
+        else if (_items.Count == 0)
+        {
+            <p class="empty-message">This list is empty for now.</p>
+        }
+        else
+        {
+            <section class="list-grid" aria-label="Christmas list items">
+                @foreach (var item in _items)
+                {
+                    <article class="list-card">
+                        <img src="@item.ImageUrl" alt="Screenshot from @_selectedUser?.DisplayName's Christmas list" loading="lazy" />
+                        @if (_selectedUser?.Id != _currentUser.Id)
+                        {
+                            <div class="purchase-row">
+                                <label>
+                                    <input type="checkbox"
+                                           checked="@(item.IsPurchased == true)"
+                                           disabled="@(item.IsPurchased == true && item.PurchasedByName != _currentUser.DisplayName || _updatingItems.Contains(item.Id))"
+                                           @onchange="args => SetPurchasedAsync(item, args)" />
+                                    <span>I've bought this</span>
+                                </label>
+                                @if (item.IsPurchased == true)
+                                {
+                                    <span class="purchase-status">Bought by @item.PurchasedByName</span>
+                                }
+                            </div>
+                        }
+                    </article>
+                }
+            </section>
+        }
+
+        @if (_selectedUser?.Id == _currentUser.Id)
+        {
+            <InputFile id="list-image-picker"
+                       class="file-picker"
+                       OnChange="UploadImagesAsync"
+                       accept="image/jpeg,image/png"
+                       multiple
+                       disabled="@_uploading" />
+            <label class="add-button @(_uploading ? "add-button-disabled" : "")" for="list-image-picker">
+                <span>@(_uploading ? "Uploading..." : "Add")</span>
+            </label>
+            <p class="upload-hint">Add one or more screenshots (JPEG or PNG, up to 20 MB each).</p>
+        }
+    }
+</main>
+
+@code {
+    private const int MaxFilesPerUpload = 10;
+
+    private IReadOnlyList<FamilyUser> _users = [];
+    private IReadOnlyList<ChristmasListItem> _items = [];
+    private readonly HashSet<Guid> _updatingItems = [];
+    private FamilyUser? _currentUser;
+    private FamilyUser? _selectedUser;
+    private string _selectedListId = "";
+    private string? _error;
+    private string? _notice;
+    private bool _noticeIsError;
+    private bool _initialized;
+    private bool _loadingList;
+    private bool _uploading;
+
+    protected override void OnInitialized()
+    {
+        CurrentUser.Changed += OnCurrentUserChanged;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await InitializeAsync();
+            StateHasChanged();
+        }
+    }
+
+    private async Task InitializeAsync()
+    {
+        _error = null;
+        try
+        {
+            _users = await ListService.GetUsersAsync();
+            var savedUserId = await JS.InvokeAsync<string?>("christmasList.getUserId");
+            _currentUser = Guid.TryParse(savedUserId, out var userId)
+                ? _users.FirstOrDefault(user => user.Id == userId)
+                : null;
+            CurrentUser.SetUser(_currentUser);
+            if (_currentUser is not null)
+            {
+                _selectedListId = _currentUser.Id.ToString();
+                await LoadSelectedListAsync();
+            }
+        }
+        catch (Exception exception)
+        {
+            _error = $"Unable to load the family lists. {exception.Message}";
+        }
+        finally
+        {
+            _initialized = true;
+        }
+    }
+
+    private async Task SelectUserAsync(ChangeEventArgs args)
+    {
+        if (!Guid.TryParse(args.Value?.ToString(), out var userId))
+        {
+            return;
+        }
+
+        var user = _users.FirstOrDefault(candidate => candidate.Id == userId);
+        if (user is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await JS.InvokeVoidAsync("christmasList.setUserId", user.Id.ToString());
+        }
+        catch (JSException exception)
+        {
+            _notice = $"Unable to remember this selection in the browser. {exception.Message}";
+            _noticeIsError = true;
+            return;
+        }
+
+        _currentUser = user;
+        CurrentUser.SetUser(user);
+        _selectedListId = user.Id.ToString();
+        await LoadSelectedListAsync();
+    }
+
+    private async Task SelectListAsync(ChangeEventArgs args)
+    {
+        _selectedListId = args.Value?.ToString() ?? "";
+        await LoadSelectedListAsync();
+    }
+
+    private async Task LoadSelectedListAsync()
+    {
+        if (_currentUser is null ||
+            !Guid.TryParse(_selectedListId, out var ownerId) ||
+            _users.All(user => user.Id != ownerId))
+        {
+            _items = [];
+            _selectedUser = null;
+            return;
+        }
+
+        _selectedUser = _users.First(user => user.Id == ownerId);
+        _loadingList = true;
+        _notice = null;
+        try
+        {
+            _items = await ListService.GetListAsync(ownerId, _currentUser.Id);
+        }
+        catch (Exception exception)
+        {
+            _items = [];
+            _notice = $"Unable to load this list. {exception.Message}";
+            _noticeIsError = true;
+        }
+        finally
+        {
+            _loadingList = false;
+        }
+    }
+
+    private async Task SetPurchasedAsync(ChristmasListItem item, ChangeEventArgs args)
+    {
+        if (_currentUser is null || !bool.TryParse(args.Value?.ToString(), out var purchased))
+        {
+            return;
+        }
+
+        _updatingItems.Add(item.Id);
+        try
+        {
+            var updated = await ListService.SetPurchasedAsync(item.Id, _currentUser.Id, purchased);
+            await LoadSelectedListAsync();
+            if (!updated)
+            {
+                _notice = "Someone else may have updated this item. The list has been refreshed.";
+                _noticeIsError = false;
+            }
+        }
+        catch (Exception exception)
+        {
+            _notice = $"Unable to update the purchase status. {exception.Message}";
+            _noticeIsError = true;
+        }
+        finally
+        {
+            _updatingItems.Remove(item.Id);
+        }
+    }
+
+    private async Task UploadImagesAsync(InputFileChangeEventArgs args)
+    {
+        if (_currentUser is null)
+        {
+            return;
+        }
+
+        IReadOnlyList<IBrowserFile> files;
+        try
+        {
+            files = args.GetMultipleFiles(MaxFilesPerUpload);
+        }
+        catch (InvalidOperationException)
+        {
+            _notice = $"Choose no more than {MaxFilesPerUpload} images at a time.";
+            _noticeIsError = true;
+            return;
+        }
+
+        _uploading = true;
+        var uploaded = 0;
+        var failures = new List<string>();
+        try
+        {
+            foreach (var file in files)
+            {
+                try
+                {
+                    await using var stream = file.OpenReadStream(ImageCompressionService.MaxUploadBytes);
+                    var objectId = $"lists/{_currentUser.Id}/{Guid.NewGuid():N}";
+                    await ListService.UploadAsync(_currentUser.Id, stream, objectId);
+                    uploaded++;
+                }
+                catch (Exception exception)
+                {
+                    failures.Add($"{file.Name}: {exception.Message}");
+                }
+            }
+
+            _notice = failures.Count == 0
+                ? $"Uploaded {uploaded} screenshot{(uploaded == 1 ? "" : "s")}."
+                : $"{uploaded} uploaded; {failures.Count} failed. {string.Join(" ", failures)}";
+            _noticeIsError = failures.Count > 0;
+            await LoadSelectedListAsync();
+        }
+        finally
+        {
+            _uploading = false;
+        }
+    }
+
+    private void OnCurrentUserChanged()
+    {
+        _ = InvokeAsync(() =>
+        {
+            _currentUser = CurrentUser.User;
+            StateHasChanged();
+        });
+    }
+
+    public void Dispose()
+    {
+        CurrentUser.Changed -= OnCurrentUserChanged;
+    }
+}

@@ -4,7 +4,11 @@
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
   </PropertyGroup>
   <ItemGroup>
+    <PackageVersion Include="AWSSDK.S3" Version="3.7.414.3" />
+    <PackageVersion Include="Dapper" Version="2.1.66" />
     <PackageVersion Include="Microsoft.AspNetCore.Components.WebAssembly.Server" Version="11.0.0" />
     <PackageVersion Include="Microsoft.AspNetCore.Components.WebAssembly" Version="11.0.0" />
+    <PackageVersion Include="Npgsql" Version="9.0.3" />
+    <PackageVersion Include="SixLabors.ImageSharp" Version="3.1.12" />
   </ItemGroup>
 </Project>

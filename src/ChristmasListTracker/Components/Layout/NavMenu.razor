@@ -1,34 +1,61 @@
-﻿<script type="module" src="@Assets["Components/Layout/NavMenu.razor.js"]"></script>
+@implements IDisposable
+@inject CurrentUserState CurrentUser
+@inject IJSRuntime JS
+@inject NavigationManager Navigation
 
-<div class="top-row ps-3 navbar navbar-dark">
-    <div class="container-fluid">
-        <a class="navbar-brand" href="">ChristmasListTracker</a>
-    </div>
+<div class="menu-header">
+    <a class="navbar-brand" href="/">Christmas Lists</a>
 </div>
 
 <nav-menu>
-    <input type="checkbox" title="Navigation menu" class="navbar-toggler" />
-
+    <input type="checkbox" title="Open navigation menu" class="navbar-toggler" />
     <div class="nav-scrollable">
-        <nav class="nav flex-column">
-            <div class="nav-item px-3">
-                <NavLink class="nav-link" href="" Match="NavLinkMatch.All">
-                    <span class="bi bi-house-door-fill-nav-menu" aria-hidden="true"></span> Home
-                </NavLink>
-            </div>
-
-            <div class="nav-item px-3">
-                <NavLink class="nav-link" href="counter">
-                    <span class="bi bi-plus-square-fill-nav-menu" aria-hidden="true"></span> Counter
-                </NavLink>
-            </div>
-
-            <div class="nav-item px-3">
-                <NavLink class="nav-link" href="weather">
-                    <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Weather
-                </NavLink>
-            </div>
+        <nav class="nav flex-column" aria-label="Main navigation">
+            <NavLink class="nav-link" href="/" Match="NavLinkMatch.All">My family</NavLink>
+            @if (CurrentUser.User is not null)
+            {
+                <div class="menu-user">Browsing as <strong>@CurrentUser.User.DisplayName</strong></div>
+                <button class="sign-out-button" @onclick="SignOutAsync">Sign out</button>
+            }
+            @if (!string.IsNullOrEmpty(_signOutError))
+            {
+                <p class="menu-error" role="alert">@_signOutError</p>
+            }
         </nav>
     </div>
 </nav-menu>
 
+@code {
+    private string? _signOutError;
+
+    protected override void OnInitialized()
+    {
+        CurrentUser.Changed += OnCurrentUserChanged;
+    }
+
+    private async Task SignOutAsync()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("christmasList.clearUserId");
+        }
+        catch (JSException exception)
+        {
+            _signOutError = $"Unable to sign out. {exception.Message}";
+            return;
+        }
+
+        CurrentUser.SetUser(null);
+        Navigation.NavigateTo("/", forceLoad: true);
+    }
+
+    private void OnCurrentUserChanged()
+    {
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        CurrentUser.Changed -= OnCurrentUserChanged;
+    }
+}

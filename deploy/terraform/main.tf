@@ -80,10 +80,16 @@ resource "render_web_service" "blazor_app" {
       value = "Host=db.${supabase_project.christmas_db.id}.supabase.co;Database=postgres;Username=postgres;Password=${local.env["DATABASE_PASSWORD"]}"
     }
     "R2__ServiceUrl" = {
-      value = "https://${local.env["CLOUDFLARE_ACCOUNT_ID"]}.r2.cloudflarestorage.com"
+      value = local.env["R2_SERVICE_URL"]
     }
     "R2__BucketName" = {
       value = cloudflare_r2_bucket.christmas_photos.name
+    }
+    "R2__AccessKeyId" = {
+      value = local.env["R2_ACCESS_KEY_ID"]
+    }
+    "R2__SecretAccessKey" = {
+      value = local.env["R2_SECRET_ACCESS_KEY"]
     }
   }
 }
