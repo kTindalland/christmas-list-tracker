@@ -75,9 +75,11 @@ resource "render_web_service" "blazor_app" {
     }
   }
 
+
+
   env_vars = {
     "ConnectionStrings__DefaultConnection" = {
-      value = "Host=db.${supabase_project.christmas_db.id}.supabase.co;Database=postgres;Username=postgres;Password=${local.env["DATABASE_PASSWORD"]}"
+      value = "Host=db.${supabase_project.christmas_db.id}.supabase.co;Port=5432;Database=postgres;Username=postgres;Password=${local.env["DATABASE_PASSWORD"]};SSL Mode=Require;Trust Server Certificate=true"
     }
     "R2__ServiceUrl" = {
       value = local.env["R2_SERVICE_URL"]
