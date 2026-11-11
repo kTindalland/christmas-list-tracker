@@ -18,14 +18,12 @@ terraform {
 
 # --- NATIVE .ENV PARSER ---
 locals {
-  # Reads and parses key-value pairs from the local .env file
   env_raw = {
     for line in split("\n", file("${path.module}/.env")) :
     trimspace(split("=", line)[0]) => trimspace(split("=", line)[1])
     if length(regexall("^\\s*[^#=]+\\s*=", line)) > 0
   }
 
-  # Wrap sensitive environment values
   env = {
     for k, v in local.env_raw : k => sensitive(v)
   }
@@ -51,8 +49,7 @@ resource "supabase_project" "christmas_db" {
   organization_id   = local.env["SUPABASE_ORG_ID"]
   name              = "family-christmas-lists-db"
   database_password = local.env["DATABASE_PASSWORD"]
-  region            = "eu-west-1" # Closest AWS region to Northern England
-  instance_size     = "micro"
+  region            = "eu-west-1"
 }
 
 # --- 2. CLOUDFLARE R2 BUCKET (FOR PHOTO UPLOADS) ---
@@ -60,26 +57,34 @@ resource "supabase_project" "christmas_db" {
 resource "cloudflare_r2_bucket" "christmas_photos" {
   account_id = local.env["CLOUDFLARE_ACCOUNT_ID"]
   name       = "family-christmas-list-photos"
-  location   = "weur" # Western Europe jurisdiction
+  location   = "weur"
 }
 
 # --- 3. RENDER WEB SERVICE (BLAZOR APP) ---
 
 resource "render_web_service" "blazor_app" {
-  name        = "family-christmas-list"
-  plan        = "free"
-  region      = "frankfurt" # Free tier region closest to UK
-  runtime     = "docker"
-  auto_deploy = "yes"
+  name   = "family-christmas-list"
+  plan   = "free"
+  region = "frankfurt"
 
-  repo   = "https://github.com/your-username/your-christmas-list-repo"
-  branch = "main"
+  runtime_source = {
+    docker = {
+      repo_url    = "https://github.com/kTindalland/christmas-list-tracker"
+      branch      = "main"
+      auto_deploy = true
+    }
+  }
 
-  # Environment variables injected straight into your Blazor container runtime
   env_vars = {
-    "ConnectionStrings__DefaultConnection" = "Host=${supabase_project.christmas_db.endpoint};Database=postgres;Username=postgres;Password=${local.env["DATABASE_PASSWORD"]}"
-    "R2__ServiceUrl"                       = "https://${local.env["CLOUDFLARE_ACCOUNT_ID"]}.r2.cloudflarestorage.com"
-    "R2__BucketName"                       = cloudflare_r2_bucket.christmas_photos.name
+    "ConnectionStrings__DefaultConnection" = {
+      value = "Host=db.${supabase_project.christmas_db.id}.supabase.co;Database=postgres;Username=postgres;Password=${local.env["DATABASE_PASSWORD"]}"
+    }
+    "R2__ServiceUrl" = {
+      value = "https://${local.env["CLOUDFLARE_ACCOUNT_ID"]}.r2.cloudflarestorage.com"
+    }
+    "R2__BucketName" = {
+      value = cloudflare_r2_bucket.christmas_photos.name
+    }
   }
 }
 

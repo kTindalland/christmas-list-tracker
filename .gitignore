@@ -5,6 +5,7 @@
 
 # tf files
 *.terraform*
+*.tfstate*
 
 # dotenv files
 .env
