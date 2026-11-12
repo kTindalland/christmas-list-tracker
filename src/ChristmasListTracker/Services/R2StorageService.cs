@@ -44,7 +44,9 @@ public sealed class R2StorageService : IDisposable
             BucketName = _bucketName,
             Key = objectId,
             InputStream = stream,
-            ContentType = image.ContentType
+            ContentType = image.ContentType,
+            DisablePayloadSigning = true,
+            UseChunkEncoding = false
         }, cancellationToken);
     }
 
