@@ -6,6 +6,7 @@
 @inject ChristmasListService ListService
 @inject CurrentUserState CurrentUser
 @inject IJSRuntime JS
+@inject ILogger<Home> Logger
 
 <PageTitle>Christmas Lists</PageTitle>
 
@@ -106,7 +107,7 @@
                        multiple
                        disabled="@_uploading" />
             <label class="add-button @(_uploading ? "add-button-disabled" : "")" for="list-image-picker">
-                <span>@(_uploading ? "Uploading..." : "Add")</span>
+                <span>@(_uploading ? _uploadStatus : "Add")</span>
             </label>
             <p class="upload-hint">Add one or more screenshots (JPEG or PNG, up to 20 MB each).</p>
         }
@@ -128,6 +129,7 @@
     private bool _initialized;
     private bool _loadingList;
     private bool _uploading;
+    private string _uploadStatus = "Uploading...";
 
     protected override void OnInitialized()
     {
@@ -203,6 +205,7 @@
     private async Task SelectListAsync(ChangeEventArgs args)
     {
         _selectedListId = args.Value?.ToString() ?? "";
+        _notice = null;
         await LoadSelectedListAsync();
     }
 
@@ -219,7 +222,6 @@
 
         _selectedUser = _users.First(user => user.Id == ownerId);
         _loadingList = true;
-        _notice = null;
         try
         {
             _items = await ListService.GetListAsync(ownerId, _currentUser.Id);
@@ -243,6 +245,7 @@
             return;
         }
 
+        _notice = null;
         _updatingItems.Add(item.Id);
         try
         {
@@ -285,12 +288,16 @@
         }
 
         _uploading = true;
+        _notice = null;
         var uploaded = 0;
         var failures = new List<string>();
         try
         {
-            foreach (var file in files)
+            for (var index = 0; index < files.Count; index++)
             {
+                var file = files[index];
+                _uploadStatus = $"Uploading {index + 1} of {files.Count}...";
+                await InvokeAsync(StateHasChanged);
                 try
                 {
                     await using var stream = file.OpenReadStream(ImageCompressionService.MaxUploadBytes);
@@ -300,6 +307,7 @@
                 }
                 catch (Exception exception)
                 {
+                    Logger.LogError(exception, "Failed to upload a Christmas list image.");
                     failures.Add($"{file.Name}: {exception.Message}");
                 }
             }
@@ -313,6 +321,7 @@
         finally
         {
             _uploading = false;
+            _uploadStatus = "Uploading...";
         }
     }
 
