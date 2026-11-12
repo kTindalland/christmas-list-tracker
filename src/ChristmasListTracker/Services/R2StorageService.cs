@@ -65,6 +65,48 @@ public sealed class R2StorageService : IDisposable
             () => GetClient().DeleteObjectAsync(_bucketName, objectId, cancellationToken));
     }
 
+    public string CreateUploadUrl(string objectId, string contentType)
+    {
+        return GetClient().GetPreSignedURL(new GetPreSignedUrlRequest
+        {
+            BucketName = _bucketName,
+            Key = objectId,
+            ContentType = contentType,
+            Expires = DateTime.UtcNow.AddMinutes(5),
+            Verb = HttpVerb.PUT
+        });
+    }
+
+    public async Task<(long Size, string? ContentType)> GetObjectMetadataAsync(
+        string objectId,
+        CancellationToken cancellationToken = default)
+    {
+        return await ApplicationTelemetry.TrackAsync("r2.object.head", async () =>
+        {
+            var response = await GetClient().GetObjectMetadataAsync(
+                _bucketName,
+                objectId,
+                cancellationToken);
+            return (response.ContentLength, response.Headers.ContentType);
+        });
+    }
+
+    public async Task<byte[]> DownloadAsync(string objectId, CancellationToken cancellationToken = default)
+    {
+        return await ApplicationTelemetry.TrackAsync("r2.object.download", async () =>
+        {
+            using var response = await GetClient().GetObjectAsync(
+                _bucketName,
+                objectId,
+                cancellationToken);
+            await using var output = new MemoryStream();
+            await response.ResponseStream.CopyToAsync(output, cancellationToken);
+            var bytes = output.ToArray();
+            Activity.Current?.SetTag("r2.object.size", bytes.Length);
+            return bytes;
+        });
+    }
+
     public string CreateReadUrl(string objectId)
     {
         return GetClient().GetPreSignedURL(new GetPreSignedUrlRequest

@@ -14,6 +14,8 @@ public static class ApplicationTelemetry
         Meter.CreateHistogram<double>("christmas_list.operation.duration", "ms");
     public static readonly Histogram<long> ImageSize =
         Meter.CreateHistogram<long>("christmas_list.image.size", "By");
+    public static readonly Histogram<double> DirectUploadDuration =
+        Meter.CreateHistogram<double>("christmas_list.direct_upload.duration", "ms");
 
     public static async Task<T> TrackAsync<T>(string operation, Func<Task<T>> action)
     {

@@ -19,6 +19,16 @@ public sealed class ListRepository(NpgsqlDataSource dataSource)
         });
     }
 
+    public async Task<FamilyUser?> GetUserAsync(Guid userId, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        return await connection.QuerySingleOrDefaultAsync<FamilyUser>(
+            new CommandDefinition(
+                "SELECT id, display_name AS DisplayName FROM users WHERE id = @userId",
+                new { userId },
+                cancellationToken: cancellationToken));
+    }
+
     public async Task<IReadOnlyList<ChristmasListItemRow>> GetListAsync(
         Guid ownerUserId,
         Guid viewerUserId,
@@ -29,6 +39,7 @@ public sealed class ListRepository(NpgsqlDataSource dataSource)
                    item.user_id AS OwnerUserId,
                    item.object_id AS ObjectId,
                    item.created_at AS CreatedAt,
+                   item.image_status AS ImageStatus,
                    CASE WHEN item.user_id <> @viewerUserId
                         THEN item.purchased_by_user_id IS NOT NULL
                         ELSE NULL
@@ -40,6 +51,7 @@ public sealed class ListRepository(NpgsqlDataSource dataSource)
             FROM christmas_list_items AS item
             LEFT JOIN users AS buyer ON buyer.id = item.purchased_by_user_id
             WHERE item.user_id = @ownerUserId
+              AND item.image_status <> 'uploading'
             ORDER BY item.created_at DESC;
             """;
 
@@ -52,23 +64,173 @@ public sealed class ListRepository(NpgsqlDataSource dataSource)
         });
     }
 
-    public async Task<Guid> AddItemAsync(
+    public async Task PrepareUploadAsync(
+        Guid itemId,
         Guid ownerUserId,
         string objectId,
+        string contentType,
+        long size,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await connection.ExecuteAsync(new CommandDefinition(
+            """
+            INSERT INTO christmas_list_items (id, user_id, object_id, image_status)
+            VALUES (@itemId, @ownerUserId, @objectId, 'uploading')
+            ON CONFLICT (id) DO NOTHING;
+            """,
+            new { itemId, ownerUserId, objectId },
+            transaction,
+            cancellationToken: cancellationToken));
+        await connection.ExecuteAsync(new CommandDefinition(
+            """
+            INSERT INTO compression_jobs (
+                item_id, source_object_id, expected_content_type, expected_size,
+                status, upload_expires_at
+            )
+            VALUES (
+                @itemId, @objectId, @contentType, @size,
+                'awaiting_upload', now() + interval '15 minutes'
+            )
+            ON CONFLICT (item_id) DO NOTHING;
+            """,
+            new { itemId, objectId, contentType, size },
+            transaction,
+            cancellationToken: cancellationToken));
+
+        var existing = await connection.QuerySingleOrDefaultAsync<PendingUpload>(
+            new CommandDefinition(
+                """
+                SELECT item.id AS ItemId,
+                       item.user_id AS OwnerUserId,
+                       job.source_object_id AS ObjectId,
+                       job.expected_content_type AS ExpectedContentType,
+                       job.expected_size AS ExpectedSize,
+                       job.status AS Status
+                FROM christmas_list_items AS item
+                JOIN compression_jobs AS job ON job.item_id = item.id
+                WHERE item.id = @itemId;
+                """,
+                new { itemId },
+                transaction,
+                cancellationToken: cancellationToken));
+        if (existing is null ||
+            existing.OwnerUserId != ownerUserId ||
+            existing.ObjectId != objectId ||
+            existing.ExpectedContentType != contentType ||
+            existing.ExpectedSize != size ||
+            existing.Status != "awaiting_upload")
+        {
+            throw new InvalidOperationException("The upload ID has already been used.");
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    public async Task<PendingUpload?> GetPendingUploadAsync(
+        Guid itemId,
+        Guid ownerUserId,
         CancellationToken cancellationToken = default)
     {
         const string sql = """
-            INSERT INTO christmas_list_items (user_id, object_id)
-            VALUES (@ownerUserId, @objectId)
-            RETURNING id;
+            SELECT item.id AS ItemId,
+                   item.user_id AS OwnerUserId,
+                   job.source_object_id AS ObjectId,
+                   job.expected_content_type AS ExpectedContentType,
+                   job.expected_size AS ExpectedSize,
+                   job.status AS Status
+            FROM christmas_list_items AS item
+            JOIN compression_jobs AS job ON job.item_id = item.id
+            WHERE item.id = @itemId AND item.user_id = @ownerUserId;
             """;
 
-        return await ApplicationTelemetry.TrackAsync("db.list_items.insert", async () =>
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        return await connection.QuerySingleOrDefaultAsync<PendingUpload>(
+            new CommandDefinition(
+                sql,
+                new { itemId, ownerUserId },
+                cancellationToken: cancellationToken));
+    }
+
+    public async Task<bool> CompleteUploadAsync(
+        Guid itemId,
+        Guid ownerUserId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        var affected = await connection.ExecuteAsync(new CommandDefinition(
+            """
+            UPDATE compression_jobs AS job
+            SET status = 'queued',
+                available_at = now(),
+                upload_expires_at = NULL,
+                updated_at = now()
+            FROM christmas_list_items AS item
+            WHERE job.item_id = @itemId
+              AND item.id = job.item_id
+              AND item.user_id = @ownerUserId
+              AND job.status = 'awaiting_upload';
+            """,
+            new { itemId, ownerUserId },
+            transaction,
+            cancellationToken: cancellationToken));
+
+        if (affected == 1)
         {
-            await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
-            return await connection.ExecuteScalarAsync<Guid>(
-                new CommandDefinition(sql, new { ownerUserId, objectId }, cancellationToken: cancellationToken));
-        });
+            await connection.ExecuteAsync(new CommandDefinition(
+                """
+                UPDATE christmas_list_items
+                SET image_status = 'processing'
+                WHERE id = @itemId AND user_id = @ownerUserId;
+                """,
+                new { itemId, ownerUserId },
+                transaction,
+                cancellationToken: cancellationToken));
+            await transaction.CommitAsync(cancellationToken);
+            return true;
+        }
+
+        var status = await connection.QuerySingleOrDefaultAsync<string>(
+            new CommandDefinition(
+                """
+                SELECT job.status
+                FROM compression_jobs AS job
+                JOIN christmas_list_items AS item ON item.id = job.item_id
+                WHERE job.item_id = @itemId AND item.user_id = @ownerUserId;
+                """,
+                new { itemId, ownerUserId },
+                transaction,
+                cancellationToken: cancellationToken));
+        await transaction.CommitAsync(cancellationToken);
+        return status is "queued" or "processing" or "cleanup_pending" or "completed" or "failed";
+    }
+
+    public async Task<string?> AbortPendingUploadAsync(
+        Guid itemId,
+        Guid ownerUserId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        return await connection.QuerySingleOrDefaultAsync<string>(
+            new CommandDefinition(
+                """
+                UPDATE compression_jobs AS job
+                SET status = 'abandoned_upload',
+                    available_at = now(),
+                    upload_expires_at = NULL,
+                    lease_expires_at = NULL,
+                    updated_at = now()
+                FROM christmas_list_items AS item
+                WHERE job.item_id = @itemId
+                  AND item.id = job.item_id
+                  AND item.user_id = @ownerUserId
+                  AND job.status = 'awaiting_upload'
+                RETURNING job.source_object_id;
+                """,
+                new { itemId, ownerUserId },
+                cancellationToken: cancellationToken));
     }
 
     public async Task<bool> SetPurchasedAsync(
@@ -109,6 +271,7 @@ public sealed class ChristmasListItemRow
     public Guid OwnerUserId { get; set; }
     public string ObjectId { get; set; } = "";
     public DateTime CreatedAt { get; set; }
+    public string ImageStatus { get; set; } = "ready";
     public bool? IsPurchased { get; set; }
     public string? PurchasedByName { get; set; }
 }

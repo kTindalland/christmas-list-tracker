@@ -42,18 +42,82 @@ Do not use it to store sensitive information.
 
 - Accept common screenshot image formats (at minimum JPEG and PNG); reject
   unsupported or invalid files with a visible per-file error.
-- Compress each image before storing it in Cloudflare R2. Compression must
-  retain enough detail for text in screenshots to remain readable.
-- Store each image in R2 and create a corresponding row in
-  `christmas_list_items`, associating the R2 object ID/key with the uploading
-  user's ID.
-- For a multi-image upload, report success or failure for each image. Do not
-  create a database row for an image that failed to upload; clean up an uploaded
-  object if its database record cannot be created.
+- The browser requests a short-lived, object-specific presigned PUT URL from
+  the server, then uploads the selected original image unchanged directly to
+  Cloudflare R2. Do not perform image decoding or compression as part of the
+  upload request. The browser never receives R2 credentials.
+- After verifying the stored object's size and content type, create a
+  `christmas_list_items` row pointing at that original object and a queued
+  `compression_jobs` row for that item. Return upload success without waiting
+  for compression to finish.
+- For a multi-image upload, report upload success or failure per file. A file
+  is not considered uploaded until its original object and corresponding item
+  and job records exist. Remove the object if the database write fails.
 - Keep R2 objects private and serve images through the application or
   short-lived signed URLs. Do not expose R2 credentials to the browser.
+- Configure bucket CORS to allow PUT only from the app's configured origin(s)
+  and only the required content-type header.
+- Compression must retain enough detail for screenshot text to remain readable.
+  Keep the original visible while its job is pending or retrying, and show a
+  clear processing or failed state to the list owner.
 - Define configurable upload-size limits and compression settings during
   implementation; no specific limits were provided.
+
+## Background image compression
+
+- Implement compression as a durable database-backed queue, not as an
+  untracked fire-and-forget task or an in-memory-only channel.
+- Add one `compression_jobs` row per uploaded list item. At minimum it records
+  the item ID, job status, attempt count, availability time, lease expiry,
+  last error, and timestamps. Use explicit states such as `queued`,
+  `processing`, `cleanup_pending`, `completed`, and `failed`.
+- A hosted background worker polls PostgreSQL and atomically claims eligible
+  jobs in a short transaction, using row locking (for example
+  `FOR UPDATE SKIP LOCKED`) and a time-limited lease. The transaction must not
+  remain open while the worker downloads or processes image data.
+- The worker downloads the original object from R2, compresses it, and uploads
+  the result under a different object key. It then uses a database transaction
+  to point the list item at the compressed object and move the job to
+  `cleanup_pending`. Only after that transaction commits does it remove the
+  original from R2 and mark the job `completed`.
+- Keep the original object until the item points to the compressed object. If
+  processing fails, leave the original and item intact. Retry transient
+  failures with bounded exponential backoff; after a configurable attempt
+  limit, mark the job `failed` and retain a useful error for diagnosis/retry.
+- Make retries safe: use stable job/item identities and predictable object
+  keys or otherwise clean up objects left by a crash. A crash after switching
+  the item pointer but before deleting the original must be recoverable from
+  `cleanup_pending`.
+- Workers must be safe to run on multiple app instances concurrently. A job
+  whose lease expires after an instance stops must become claimable again.
+- Refresh list status while compression is pending, or at minimum show the
+  original immediately and update to the compressed image on the next list
+  refresh. The owner must not see purchase state as part of this status.
+
+### Render free-service behavior
+
+- The app currently runs as a Render web service on a free plan. Render may
+  suspend that process after a period without inbound requests. An in-process
+  hosted worker cannot prevent suspension and is not a durable queue.
+- Persisting jobs in PostgreSQL means suspension does not lose work. On app
+  startup and while running, the worker should poll and resume queued or
+  expired-lease jobs. If Render suspends mid-job, the lease expires and a later
+  worker retries it.
+- On the free plan, a queued job is only guaranteed to run while the service
+  is awake. If the service suspends before the worker finishes, compression may
+  wait until the next request wakes the service. This is acceptable for
+  eventual processing, but does not guarantee prompt completion while idle.
+- If prompt processing is required even when the web app is idle, run the
+  worker on an always-on service or a separately scheduled worker that can
+  reach the database and R2. Do not rely on a periodic in-process timer to
+  wake a suspended Render service.
+
+### Upload latency note
+
+Direct-to-R2 upload avoids relaying the original through the app server, but
+still takes as long as the browser-to-R2 network transfer. Record the browser
+upload duration for comparison with the R2 and compression spans. Do not
+include presigned URLs or object keys in telemetry.
 
 ## Purchase tracking and privacy
 
@@ -79,9 +143,11 @@ Do not use it to store sensitive information.
 
 ## Technical requirements
 
-- Use the existing hosted Blazor application. All database and object-storage
-  operations must run on the server; the browser must not connect directly to
-  Postgres or receive storage secrets.
+- Use the existing hosted Blazor application. All database operations and
+  privileged object-storage operations must run on the server. If direct
+  browser-to-R2 upload is later used to reduce transfer latency, authorize it
+  only with short-lived, object-specific presigned URLs; never expose storage
+  credentials. The browser must not connect directly to Postgres.
 - Use Dapper for PostgreSQL queries, with parameterized SQL.
 - Read the PostgreSQL connection string from
   `ConnectionStrings:DefaultConnection`. `deploy/terraform/main.tf` currently
@@ -103,9 +169,15 @@ required schema, including `users` and `christmas_list_items`.
 
 The `users` table supplies selectable family members. The
 `christmas_list_items` table must at minimum associate an item ID, its R2 object
-ID/key, and the owning user's ID. It also needs purchase tracking (nullable
-`purchased_by_user_id` referencing `users`, plus a purchase timestamp). Enforce
-referential integrity and useful indexes for fetching a user's list.
+ID/key, and the owning user's ID. It also needs a way to distinguish the
+original, processing, and compressed image state (for example, an image
+status), plus purchase tracking (nullable `purchased_by_user_id` referencing
+`users`, plus a purchase timestamp). Enforce referential integrity and useful
+indexes for fetching a user's list.
+
+The `compression_jobs` table must reference `christmas_list_items` and include
+the durable queue, retry, and lease fields described above. Index it for
+efficiently finding queued jobs and expired leases.
 
 Provide a migration runner that can be run repeatedly against the database with
 all migration files present:
@@ -128,12 +200,15 @@ all migration files present:
 
 1. A family member can select a database-backed user, return later without
    selecting again, and sign out from the pull-out menu.
-2. A user can upload several screenshots in one operation; images are compressed
-   and stored in R2, with one correctly owned database item per successful
-   upload.
-3. A user can browse another family member's screenshots, mark an item
+2. A user can upload several screenshots in one operation; each successful
+   original upload is stored unchanged in R2 and has one correctly owned list
+   item and one durable compression job. The upload UI does not wait for
+   compression.
+3. Compression jobs survive app restarts/suspension, retry safely, update the
+   item to the compressed object, and only then remove the original.
+4. A user can browse another family member's screenshots, mark an item
    purchased, and see the purchaser's name and purchase status.
-4. The owner of a list cannot see purchase status or purchaser identity for
+5. The owner of a list cannot see purchase status or purchaser identity for
    items on their own list.
-5. The Add button appears at the bottom of the list, is rectangular and wide,
+6. The Add button appears at the bottom of the list, is rectangular and wide,
    and has centered "Add" text; the layout remains usable on a phone.

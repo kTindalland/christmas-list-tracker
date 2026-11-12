@@ -34,6 +34,7 @@ if (string.IsNullOrWhiteSpace(connectionString))
 
 builder.Services.AddSingleton(NpgsqlDataSource.Create(connectionString));
 builder.Services.AddSingleton<ListRepository>();
+builder.Services.AddSingleton<CompressionJobRepository>();
 builder.Services.AddSingleton<ImageCompressionService>();
 builder.Services.AddSingleton<R2StorageService>();
 builder.Services.AddScoped<ChristmasListService>();
@@ -52,6 +53,7 @@ builder.Services.AddOpenTelemetry()
         .AddRuntimeInstrumentation()
         .AddMeter(ApplicationTelemetry.MeterName)
         .AddOtlpExporter());
+builder.Services.AddHostedService<CompressionJobWorker>();
 builder.Services.AddSignalR(options => options.MaximumReceiveMessageSize = 32 * 1024);
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents()
@@ -76,6 +78,7 @@ app.UseHttpsRedirection();
 
 app.MapStaticAssets();
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
+app.MapDirectUploadEndpoints();
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode()
     .AddInteractiveWebAssemblyRenderMode()

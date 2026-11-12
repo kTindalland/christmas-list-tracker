@@ -107,6 +107,19 @@ h1 {
     width: 100%;
 }
 
+.image-status {
+    background: #edf4ef;
+    color: #355b46;
+    font-size: 0.82rem;
+    margin: 0;
+    padding: 0.6rem 0.75rem;
+}
+
+.image-status-error {
+    background: #fff0ed;
+    color: #8d291b;
+}
+
 .purchase-row {
     align-items: center;
     border-top: 1px solid #e7ebe7;

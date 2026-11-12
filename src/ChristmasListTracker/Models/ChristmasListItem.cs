@@ -5,5 +5,6 @@ public sealed record ChristmasListItem(
     Guid OwnerUserId,
     string ImageUrl,
     DateTime CreatedAt,
+    string ImageStatus,
     bool? IsPurchased,
     string? PurchasedByName);

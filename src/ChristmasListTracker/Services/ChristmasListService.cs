@@ -4,9 +4,7 @@ namespace ChristmasListTracker.Services;
 
 public sealed class ChristmasListService(
     ListRepository repository,
-    ImageCompressionService imageCompression,
-    R2StorageService storage,
-    ILogger<ChristmasListService> logger)
+    R2StorageService storage)
 {
     public Task<IReadOnlyList<FamilyUser>> GetUsersAsync(CancellationToken cancellationToken = default) =>
         ApplicationTelemetry.TrackAsync(
@@ -26,40 +24,9 @@ public sealed class ChristmasListService(
                 row.OwnerUserId,
                 storage.CreateReadUrl(row.ObjectId),
                 row.CreatedAt,
+                row.ImageStatus,
                 row.IsPurchased,
                 row.PurchasedByName)).ToArray();
-        });
-    }
-
-    public async Task UploadAsync(
-        Guid ownerUserId,
-        Stream content,
-        string objectId,
-        CancellationToken cancellationToken = default)
-    {
-        await ApplicationTelemetry.TrackAsync("christmas_list.item.upload", async () =>
-        {
-            var compressedImage = await imageCompression.CompressAsync(content, cancellationToken);
-            var storedObjectId = $"{objectId}.{compressedImage.Extension}";
-            await storage.UploadAsync(storedObjectId, compressedImage, cancellationToken);
-
-            try
-            {
-                await repository.AddItemAsync(ownerUserId, storedObjectId, cancellationToken);
-            }
-            catch
-            {
-                try
-                {
-                    await storage.DeleteAsync(storedObjectId, CancellationToken.None);
-                }
-                catch (Exception cleanupException)
-                {
-                    logger.LogError(cleanupException, "Failed to clean up R2 object after the database insert failed.");
-                }
-
-                throw;
-            }
         });
     }
 

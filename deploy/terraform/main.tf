@@ -27,6 +27,12 @@ locals {
   env = {
     for k, v in local.env_raw : k => sensitive(v)
   }
+
+  r2_extra_allowed_origins = [
+    for origin in try(split(",", local.env["R2_EXTRA_ALLOWED_ORIGINS"]), []) :
+    trimspace(origin)
+    if trimspace(origin) != ""
+  ]
 }
 
 # --- PROVIDERS CONFIGURATION ---
@@ -58,6 +64,25 @@ resource "cloudflare_r2_bucket" "christmas_photos" {
   account_id = local.env["CLOUDFLARE_ACCOUNT_ID"]
   name       = "family-christmas-list-photos"
   location   = "weur"
+}
+
+resource "cloudflare_r2_bucket_cors" "christmas_photos" {
+  account_id  = local.env["CLOUDFLARE_ACCOUNT_ID"]
+  bucket_name = cloudflare_r2_bucket.christmas_photos.name
+
+  rules = [{
+    id = "Allow direct uploads from the family list app"
+    allowed = {
+      methods = ["PUT"]
+      origins = concat(
+        ["https://${render_web_service.blazor_app.slug}.onrender.com"],
+        local.r2_extra_allowed_origins
+      )
+      headers = ["content-type"]
+    }
+    expose_headers  = ["ETag"]
+    max_age_seconds = 3600
+  }]
 }
 
 # --- 3. RENDER WEB SERVICE (BLAZOR APP) ---

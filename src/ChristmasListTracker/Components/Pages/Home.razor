@@ -77,6 +77,14 @@
                 {
                     <article class="list-card">
                         <img src="@item.ImageUrl" alt="Screenshot from @_selectedUser?.DisplayName's Christmas list" loading="lazy" />
+                        @if (item.ImageStatus == "processing")
+                        {
+                            <p class="image-status">Compressing image...</p>
+                        }
+                        else if (item.ImageStatus == "failed")
+                        {
+                            <p class="image-status image-status-error">Compression failed; showing the original image.</p>
+                        }
                         @if (_selectedUser?.Id != _currentUser.Id)
                         {
                             <div class="purchase-row">
@@ -100,12 +108,14 @@
 
         @if (_selectedUser?.Id == _currentUser.Id)
         {
-            <InputFile id="list-image-picker"
-                       class="file-picker"
-                       OnChange="UploadImagesAsync"
-                       accept="image/jpeg,image/png"
-                       multiple
-                       disabled="@_uploading" />
+            <input id="list-image-picker"
+                   @ref="_uploadInput"
+                   class="file-picker"
+                   type="file"
+                   @onchange="UploadImagesAsync"
+                   accept="image/jpeg,image/png"
+                   multiple
+                   disabled="@_uploading" />
             <label class="add-button @(_uploading ? "add-button-disabled" : "")" for="list-image-picker">
                 <span>@(_uploading ? _uploadStatus : "Add")</span>
             </label>
@@ -116,10 +126,12 @@
 
 @code {
     private const int MaxFilesPerUpload = 10;
+    private const long MaxUploadBytes = 20 * 1024 * 1024;
 
     private IReadOnlyList<FamilyUser> _users = [];
     private IReadOnlyList<ChristmasListItem> _items = [];
     private readonly HashSet<Guid> _updatingItems = [];
+    private ElementReference _uploadInput;
     private FamilyUser? _currentUser;
     private FamilyUser? _selectedUser;
     private string _selectedListId = "";
@@ -268,61 +280,49 @@
         }
     }
 
-    private async Task UploadImagesAsync(InputFileChangeEventArgs args)
+    private async Task UploadImagesAsync(ChangeEventArgs args)
     {
         if (_currentUser is null)
         {
             return;
         }
 
-        IReadOnlyList<IBrowserFile> files;
-        try
-        {
-            files = args.GetMultipleFiles(MaxFilesPerUpload);
-        }
-        catch (InvalidOperationException)
-        {
-            _notice = $"Choose no more than {MaxFilesPerUpload} images at a time.";
-            _noticeIsError = true;
-            return;
-        }
-
         _uploading = true;
         _notice = null;
-        var uploaded = 0;
-        var failures = new List<string>();
+        using var progressReference = DotNetObjectReference.Create(this);
         try
         {
-            for (var index = 0; index < files.Count; index++)
-            {
-                var file = files[index];
-                _uploadStatus = $"Uploading {index + 1} of {files.Count}...";
-                await InvokeAsync(StateHasChanged);
-                try
-                {
-                    await using var stream = file.OpenReadStream(ImageCompressionService.MaxUploadBytes);
-                    var objectId = $"lists/{_currentUser.Id}/{Guid.NewGuid():N}";
-                    await ListService.UploadAsync(_currentUser.Id, stream, objectId);
-                    uploaded++;
-                }
-                catch (Exception exception)
-                {
-                    Logger.LogError(exception, "Failed to upload a Christmas list image.");
-                    failures.Add($"{file.Name}: {exception.Message}");
-                }
-            }
+            var result = await JS.InvokeAsync<BrowserUploadResult>(
+                "christmasList.uploadFiles",
+                _uploadInput,
+                progressReference,
+                MaxFilesPerUpload,
+                MaxUploadBytes);
 
-            _notice = failures.Count == 0
-                ? $"Uploaded {uploaded} screenshot{(uploaded == 1 ? "" : "s")}."
-                : $"{uploaded} uploaded; {failures.Count} failed. {string.Join(" ", failures)}";
-            _noticeIsError = failures.Count > 0;
+            _notice = result.Errors.Length == 0
+                ? $"Uploaded {result.Uploaded} screenshot{(result.Uploaded == 1 ? "" : "s")}. Compression will finish in the background."
+                : $"{result.Uploaded} uploaded; {result.Errors.Length} failed. {string.Join(" ", result.Errors)}";
+            _noticeIsError = result.Errors.Length > 0;
             await LoadSelectedListAsync();
+        }
+        catch (JSException exception)
+        {
+            Logger.LogError(exception, "Direct-to-R2 browser upload failed.");
+            _notice = $"Upload failed. {exception.Message}";
+            _noticeIsError = true;
         }
         finally
         {
             _uploading = false;
             _uploadStatus = "Uploading...";
         }
+    }
+
+    [JSInvokable]
+    public Task ReportUploadProgressAsync(int fileNumber, int fileCount, int percent)
+    {
+        _uploadStatus = $"Uploading {fileNumber} of {fileCount} ({percent}%)...";
+        return InvokeAsync(StateHasChanged);
     }
 
     private void OnCurrentUserChanged()
@@ -333,6 +333,8 @@
             StateHasChanged();
         });
     }
+
+    public sealed record BrowserUploadResult(int Uploaded, string[] Errors);
 
     public void Dispose()
     {
