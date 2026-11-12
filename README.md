@@ -50,7 +50,8 @@ Do not store sensitive information in this application.
 ## Terraform configuration
 
 `deploy/terraform/main.tf` passes the Supabase connection string and R2
-configuration to Render. Add `CLOUDFLARE_R2_ACCESS_KEY_ID` and
-`CLOUDFLARE_R2_SECRET_ACCESS_KEY` to the ignored `deploy/terraform/.env` file
-before applying Terraform. These must be R2 S3 API credentials scoped to the
-application bucket; do not commit them.
+configuration to Render. It uses this project's Session pooler at
+`aws-1-eu-west-1.pooler.supabase.com`, with the project ID as the username
+suffix. Also add `CLOUDFLARE_R2_ACCESS_KEY_ID` and
+`CLOUDFLARE_R2_SECRET_ACCESS_KEY` to `.env`. These must be R2 S3 API credentials
+scoped to the application bucket; do not commit them.
