@@ -86,7 +86,7 @@
             <section class="list-grid" aria-label="Christmas list items">
                 @foreach (var item in DisplayedItems)
                 {
-                    <article class="list-card">
+                    <article class="list-card" @key="item.Id">
                         <img src="@item.ImageUrl" alt="Screenshot from @_selectedUser?.DisplayName's Christmas list" loading="lazy" />
                         @if (item.ImageStatus == "processing")
                         {
