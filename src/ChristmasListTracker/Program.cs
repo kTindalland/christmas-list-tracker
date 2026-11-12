@@ -2,6 +2,9 @@ using ChristmasListTracker.Client.Pages;
 using ChristmasListTracker.Components;
 using ChristmasListTracker.Services;
 using Npgsql;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 
 var builder = WebApplication.CreateBuilder(args);
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
@@ -35,6 +38,20 @@ builder.Services.AddSingleton<ImageCompressionService>();
 builder.Services.AddSingleton<R2StorageService>();
 builder.Services.AddScoped<ChristmasListService>();
 builder.Services.AddScoped<CurrentUserState>();
+var serviceName = builder.Configuration["OTEL_SERVICE_NAME"] ?? "christmas-list-tracker";
+builder.Services.AddOpenTelemetry()
+    .ConfigureResource(resource => resource.AddService(serviceName))
+    .WithTracing(tracing => tracing
+        .AddAspNetCoreInstrumentation()
+        .AddHttpClientInstrumentation()
+        .AddSource(ApplicationTelemetry.ActivitySourceName)
+        .AddOtlpExporter())
+    .WithMetrics(metrics => metrics
+        .AddAspNetCoreInstrumentation()
+        .AddHttpClientInstrumentation()
+        .AddRuntimeInstrumentation()
+        .AddMeter(ApplicationTelemetry.MeterName)
+        .AddOtlpExporter());
 builder.Services.AddSignalR(options => options.MaximumReceiveMessageSize = 32 * 1024);
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents()

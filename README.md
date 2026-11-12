@@ -55,3 +55,18 @@ configuration to Render. It uses this project's Session pooler at
 suffix. Also add `CLOUDFLARE_R2_ACCESS_KEY_ID` and
 `CLOUDFLARE_R2_SECRET_ACCESS_KEY` to `.env`. These must be R2 S3 API credentials
 scoped to the application bucket; do not commit them.
+
+## OpenTelemetry
+
+The server exports traces and metrics through OTLP. Set
+`OTEL_SERVICE_NAME`, `OTEL_EXPORTER_OTLP_ENDPOINT`,
+`OTEL_EXPORTER_OTLP_PROTOCOL`, and `OTEL_EXPORTER_OTLP_HEADERS` in the server
+environment. For Honeycomb, the headers should contain the Honeycomb API key;
+keep that key server-side.
+
+Traces include ASP.NET Core requests, outgoing HTTP calls, list/database
+operations, and nested image-compression and R2-upload spans. The custom
+`christmas_list.operation.duration` and `christmas_list.image.size` metrics
+help compare time spent in compression, storage, and database operations.
+Image telemetry records format, dimensions, and byte sizes, but not family
+member names or storage object keys.

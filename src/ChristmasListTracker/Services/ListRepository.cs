@@ -8,12 +8,15 @@ public sealed class ListRepository(NpgsqlDataSource dataSource)
 {
     public async Task<IReadOnlyList<FamilyUser>> GetUsersAsync(CancellationToken cancellationToken = default)
     {
-        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
-        var users = await connection.QueryAsync<FamilyUser>(
-            new CommandDefinition(
-                "SELECT id, display_name AS DisplayName FROM users ORDER BY display_name",
-                cancellationToken: cancellationToken));
-        return users.AsList();
+        return await ApplicationTelemetry.TrackAsync("db.users.select", async () =>
+        {
+            await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+            var users = await connection.QueryAsync<FamilyUser>(
+                new CommandDefinition(
+                    "SELECT id, display_name AS DisplayName FROM users ORDER BY display_name",
+                    cancellationToken: cancellationToken));
+            return (IReadOnlyList<FamilyUser>)users.AsList();
+        });
     }
 
     public async Task<IReadOnlyList<ChristmasListItemRow>> GetListAsync(
@@ -40,10 +43,13 @@ public sealed class ListRepository(NpgsqlDataSource dataSource)
             ORDER BY item.created_at DESC;
             """;
 
-        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
-        var rows = await connection.QueryAsync<ChristmasListItemRow>(
-            new CommandDefinition(sql, new { ownerUserId, viewerUserId }, cancellationToken: cancellationToken));
-        return rows.AsList();
+        return await ApplicationTelemetry.TrackAsync("db.list_items.select", async () =>
+        {
+            await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+            var rows = await connection.QueryAsync<ChristmasListItemRow>(
+                new CommandDefinition(sql, new { ownerUserId, viewerUserId }, cancellationToken: cancellationToken));
+            return (IReadOnlyList<ChristmasListItemRow>)rows.AsList();
+        });
     }
 
     public async Task<Guid> AddItemAsync(
@@ -57,9 +63,12 @@ public sealed class ListRepository(NpgsqlDataSource dataSource)
             RETURNING id;
             """;
 
-        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
-        return await connection.ExecuteScalarAsync<Guid>(
-            new CommandDefinition(sql, new { ownerUserId, objectId }, cancellationToken: cancellationToken));
+        return await ApplicationTelemetry.TrackAsync("db.list_items.insert", async () =>
+        {
+            await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+            return await connection.ExecuteScalarAsync<Guid>(
+                new CommandDefinition(sql, new { ownerUserId, objectId }, cancellationToken: cancellationToken));
+        });
     }
 
     public async Task<bool> SetPurchasedAsync(
@@ -84,10 +93,13 @@ public sealed class ListRepository(NpgsqlDataSource dataSource)
                 AND purchased_by_user_id = @viewerUserId;
               """;
 
-        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
-        var affected = await connection.ExecuteAsync(
-            new CommandDefinition(sql, new { itemId, viewerUserId }, cancellationToken: cancellationToken));
-        return affected == 1;
+        return await ApplicationTelemetry.TrackAsync("db.list_items.purchase.update", async () =>
+        {
+            await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+            var affected = await connection.ExecuteAsync(
+                new CommandDefinition(sql, new { itemId, viewerUserId }, cancellationToken: cancellationToken));
+            return affected == 1;
+        });
     }
 }
 

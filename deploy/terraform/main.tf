@@ -93,6 +93,20 @@ resource "render_web_service" "blazor_app" {
     "R2__SecretAccessKey" = {
       value = local.env["R2_SECRET_ACCESS_KEY"]
     }
+
+    # Honeycomb OpenTelemetry Configuration
+    "OTEL_SERVICE_NAME" = {
+      value = "family-christmas-list"
+    }
+    "OTEL_EXPORTER_OTLP_PROTOCOL" = {
+      value = "http/protobuf"
+    }
+    "OTEL_EXPORTER_OTLP_ENDPOINT" = {
+      value = "https://api.honeycomb.io"
+    }
+    "OTEL_EXPORTER_OTLP_HEADERS" = {
+      value = "x-honeycomb-team=${local.env["HONEYCOMB_API_KEY"]}"
+    }
   }
 }
 

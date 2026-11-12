@@ -2,6 +2,7 @@ using Amazon;
 using Amazon.Runtime;
 using Amazon.S3;
 using Amazon.S3.Model;
+using System.Diagnostics;
 
 namespace ChristmasListTracker.Services;
 
@@ -38,21 +39,30 @@ public sealed class R2StorageService : IDisposable
         CompressedImage image,
         CancellationToken cancellationToken = default)
     {
-        await using var stream = new MemoryStream(image.Content, writable: false);
-        await GetClient().PutObjectAsync(new PutObjectRequest
+        await ApplicationTelemetry.TrackAsync("r2.object.upload", async () =>
         {
-            BucketName = _bucketName,
-            Key = objectId,
-            InputStream = stream,
-            ContentType = image.ContentType,
-            DisablePayloadSigning = true,
-            UseChunkEncoding = false
-        }, cancellationToken);
+            var activity = Activity.Current;
+            activity?.SetTag("r2.object.size", image.Content.Length);
+            activity?.SetTag("r2.content_type", image.ContentType);
+
+            await using var stream = new MemoryStream(image.Content, writable: false);
+            await GetClient().PutObjectAsync(new PutObjectRequest
+            {
+                BucketName = _bucketName,
+                Key = objectId,
+                InputStream = stream,
+                ContentType = image.ContentType,
+                DisablePayloadSigning = true,
+                UseChunkEncoding = false
+            }, cancellationToken);
+        });
     }
 
     public async Task DeleteAsync(string objectId, CancellationToken cancellationToken = default)
     {
-        await GetClient().DeleteObjectAsync(_bucketName, objectId, cancellationToken);
+        await ApplicationTelemetry.TrackAsync(
+            "r2.object.delete",
+            () => GetClient().DeleteObjectAsync(_bucketName, objectId, cancellationToken));
     }
 
     public string CreateReadUrl(string objectId)
