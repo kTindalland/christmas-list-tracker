@@ -27,6 +27,8 @@ locals {
   env = {
     for k, v in local.env_raw : k => sensitive(v)
   }
+
+  supabase_region = "eu-west-1"
 }
 
 # --- PROVIDERS CONFIGURATION ---
@@ -49,7 +51,7 @@ resource "supabase_project" "christmas_db" {
   organization_id   = local.env["SUPABASE_ORG_ID"]
   name              = "family-christmas-lists-db"
   database_password = local.env["DATABASE_PASSWORD"]
-  region            = "eu-west-1"
+  region            = local.supabase_region
 }
 
 # --- 2. CLOUDFLARE R2 BUCKET (FOR PHOTO UPLOADS) ---
@@ -79,7 +81,7 @@ resource "render_web_service" "blazor_app" {
 
   env_vars = {
     "ConnectionStrings__DefaultConnection" = {
-      value = "Host=db.${supabase_project.christmas_db.id}.supabase.co;Port=5432;Database=postgres;Username=postgres;Password=${local.env["DATABASE_PASSWORD"]};SSL Mode=Require;Trust Server Certificate=true"
+      value = "Host=aws-0-${local.supabase_region}.pooler.supabase.com;Port=5432;Database=postgres;Username=postgres.${supabase_project.christmas_db.id};Password=${local.env["DATABASE_PASSWORD"]};SSL Mode=Require"
     }
     "R2__ServiceUrl" = {
       value = local.env["R2_SERVICE_URL"]

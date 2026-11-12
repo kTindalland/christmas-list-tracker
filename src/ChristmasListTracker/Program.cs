@@ -41,6 +41,11 @@ builder.Services.AddRazorComponents()
     .AddInteractiveWebAssemblyComponents();
 
 var app = builder.Build();
+var databaseSettings = new NpgsqlConnectionStringBuilder(connectionString);
+app.Logger.LogInformation(
+    "Configured PostgreSQL endpoint {DatabaseHost}:{DatabasePort}",
+    databaseSettings.Host,
+    databaseSettings.Port);
 
 // Configure the HTTP request pipeline.
 if (!app.Environment.IsDevelopment())

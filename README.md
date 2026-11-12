@@ -7,7 +7,11 @@ stores compressed screenshots in a private Cloudflare R2 bucket.
 ## Database setup
 
 Set `ConnectionStrings__DefaultConnection` to the Supabase PostgreSQL connection
-string, then run the migration runner from the repository root:
+string, preferably Supabase's **Session pooler** connection string (port 5432),
+then run the migration runner from the repository root. The Render Terraform
+configuration uses the session pooler because Render cannot reliably reach the
+direct database endpoint over IPv6, and the migration runner requires a
+persistent session for its advisory lock.
 
 ```powershell
 dotnet run --project src\ChristmasListTracker -- --migrate
