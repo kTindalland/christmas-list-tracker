@@ -10,7 +10,7 @@
 
 <PageTitle>Christmas Lists</PageTitle>
 
-<main class="list-page">
+<main class="list-page @(IsViewingOwnList ? "list-page-with-add" : "")">
     @if (!_initialized)
     {
         <p class="status-message" role="status">Loading family lists...</p>
@@ -24,16 +24,16 @@
     {
         <section class="welcome-panel">
             <p class="eyebrow">A little more Christmas magic</p>
-            <h1>Whose list are you checking?</h1>
+            <h1>Select yourself to get started</h1>
             @if (_users.Count == 0)
             {
                 <p>No family members have been added to the database yet.</p>
             }
             else
             {
-                <label for="user-picker">Choose your name</label>
+                <label for="user-picker">Your name</label>
                 <select id="user-picker" class="form-select" @onchange="SelectUserAsync">
-                    <option value="">Select a family member</option>
+                    <option value="">Choose your name</option>
                     @foreach (var user in _users)
                     {
                         <option value="@user.Id">@user.DisplayName</option>
@@ -55,6 +55,13 @@
                     <option value="@user.Id">@user.DisplayName</option>
                 }
             </select>
+            @if (!IsViewingOwnList)
+            {
+                <label class="filter-toggle">
+                    <input type="checkbox" @bind="_showUnpurchasedOnly" />
+                    <span>Show only items not yet bought</span>
+                </label>
+            }
         </header>
 
         @if (!string.IsNullOrEmpty(_notice))
@@ -70,10 +77,14 @@
         {
             <p class="empty-message">This list is empty for now.</p>
         }
+        else if (!DisplayedItems.Any())
+        {
+            <p class="empty-message">Everything on this list has been bought.</p>
+        }
         else
         {
             <section class="list-grid" aria-label="Christmas list items">
-                @foreach (var item in _items)
+                @foreach (var item in DisplayedItems)
                 {
                     <article class="list-card">
                         <img src="@item.ImageUrl" alt="Screenshot from @_selectedUser?.DisplayName's Christmas list" loading="lazy" />
@@ -84,6 +95,17 @@
                         else if (item.ImageStatus == "failed")
                         {
                             <p class="image-status image-status-error">Compression failed; showing the original image.</p>
+                        }
+                        @if (IsViewingOwnList)
+                        {
+                            <div class="owner-actions">
+                                <button class="remove-button"
+                                        type="button"
+                                        disabled="@_removingItems.Contains(item.Id)"
+                                        @onclick="() => RemoveItemAsync(item)">
+                                    @(_removingItems.Contains(item.Id) ? "Removing..." : "Remove item")
+                                </button>
+                            </div>
                         }
                         @if (_selectedUser?.Id != _currentUser.Id)
                         {
@@ -108,18 +130,20 @@
 
         @if (_selectedUser?.Id == _currentUser.Id)
         {
-            <input id="list-image-picker"
-                   @ref="_uploadInput"
-                   class="file-picker"
-                   type="file"
-                   @onchange="UploadImagesAsync"
-                   accept="image/jpeg,image/png"
-                   multiple
-                   disabled="@_uploading" />
-            <label class="add-button @(_uploading ? "add-button-disabled" : "")" for="list-image-picker">
-                <span>@(_uploading ? _uploadStatus : "Add")</span>
-            </label>
-            <p class="upload-hint">Add one or more screenshots (JPEG or PNG, up to 20 MB each).</p>
+            <div class="add-action-bar">
+                <p class="upload-hint">Add one or more screenshots (JPEG or PNG, up to 20 MB each).</p>
+                <input id="list-image-picker"
+                       @ref="_uploadInput"
+                       class="file-picker"
+                       type="file"
+                       @onchange="UploadImagesAsync"
+                       accept="image/jpeg,image/png"
+                       multiple
+                       disabled="@_uploading" />
+                <label class="add-button @(_uploading ? "add-button-disabled" : "")" for="list-image-picker">
+                    <span>@(_uploading ? _uploadStatus : "Add")</span>
+                </label>
+            </div>
         }
     }
 </main>
@@ -131,6 +155,7 @@
     private IReadOnlyList<FamilyUser> _users = [];
     private IReadOnlyList<ChristmasListItem> _items = [];
     private readonly HashSet<Guid> _updatingItems = [];
+    private readonly HashSet<Guid> _removingItems = [];
     private ElementReference _uploadInput;
     private FamilyUser? _currentUser;
     private FamilyUser? _selectedUser;
@@ -141,7 +166,12 @@
     private bool _initialized;
     private bool _loadingList;
     private bool _uploading;
+    private bool _showUnpurchasedOnly;
     private string _uploadStatus = "Uploading...";
+
+    private bool IsViewingOwnList => _currentUser is not null && _selectedUser?.Id == _currentUser.Id;
+    private IEnumerable<ChristmasListItem> DisplayedItems =>
+        _showUnpurchasedOnly ? _items.Where(item => item.IsPurchased != true) : _items;
 
     protected override void OnInitialized()
     {
@@ -277,6 +307,56 @@
         finally
         {
             _updatingItems.Remove(item.Id);
+        }
+    }
+
+    private async Task RemoveItemAsync(ChristmasListItem item)
+    {
+        if (_currentUser is null || !IsViewingOwnList || _removingItems.Contains(item.Id))
+        {
+            return;
+        }
+
+        bool confirmed;
+        try
+        {
+            confirmed = await JS.InvokeAsync<bool>(
+                "confirm",
+                "Remove this item and its screenshot from your Christmas list?");
+        }
+        catch (JSException exception)
+        {
+            _notice = $"Unable to confirm item removal. {exception.Message}";
+            _noticeIsError = true;
+            return;
+        }
+
+        if (!confirmed)
+        {
+            return;
+        }
+
+        _notice = null;
+        _removingItems.Add(item.Id);
+        try
+        {
+            var result = await ListService.DeleteItemAsync(item.Id, _currentUser.Id);
+            _notice = result is null
+                ? "This item was already removed."
+                : result.ImageCleanupPending
+                    ? "Item removed. Its screenshot is queued for cleanup."
+                    : "Item and screenshot removed.";
+            _noticeIsError = false;
+            await LoadSelectedListAsync();
+        }
+        catch (Exception exception)
+        {
+            _notice = $"Unable to remove this item. {exception.Message}";
+            _noticeIsError = true;
+        }
+        finally
+        {
+            _removingItems.Remove(item.Id);
         }
     }
 

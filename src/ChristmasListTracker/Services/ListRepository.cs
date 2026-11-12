@@ -263,6 +263,100 @@ public sealed class ListRepository(NpgsqlDataSource dataSource)
             return affected == 1;
         });
     }
+
+    public async Task<IReadOnlyList<string>?> DeleteItemAsync(
+        Guid itemId,
+        Guid ownerUserId,
+        CancellationToken cancellationToken = default)
+    {
+        return await ApplicationTelemetry.TrackAsync("db.list_items.delete", async () =>
+        {
+            await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+            await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+
+            var compressionJob = await connection.QuerySingleOrDefaultAsync<PendingCompressionCleanup>(
+                new CommandDefinition(
+                    """
+                    SELECT source_object_id AS SourceObjectId,
+                           expected_content_type AS ExpectedContentType,
+                           compressed_object_id AS CompressedObjectId
+                    FROM compression_jobs
+                    WHERE item_id = @itemId
+                    FOR UPDATE;
+                    """,
+                    new { itemId },
+                    transaction,
+                    cancellationToken: cancellationToken));
+
+            var itemObjectId = await connection.QuerySingleOrDefaultAsync<string>(
+                new CommandDefinition(
+                    """
+                    SELECT object_id
+                    FROM christmas_list_items
+                    WHERE id = @itemId
+                      AND user_id = @ownerUserId
+                      AND image_status <> 'uploading'
+                    FOR UPDATE;
+                    """,
+                    new { itemId, ownerUserId },
+                    transaction,
+                    cancellationToken: cancellationToken));
+            if (itemObjectId is null)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return null;
+            }
+
+            var objectIds = new HashSet<string>(StringComparer.Ordinal) { itemObjectId };
+            if (compressionJob is not null)
+            {
+                objectIds.Add(compressionJob.SourceObjectId);
+                if (compressionJob.CompressedObjectId is not null)
+                {
+                    objectIds.Add(compressionJob.CompressedObjectId);
+                }
+
+                var extension = compressionJob.ExpectedContentType == "image/png" ? "png" : "jpg";
+                objectIds.Add($"compressed/{itemId:N}.{extension}");
+            }
+
+            foreach (var objectId in objectIds)
+            {
+                await connection.ExecuteAsync(new CommandDefinition(
+                    """
+                    INSERT INTO r2_object_deletion_jobs (object_id)
+                    VALUES (@objectId)
+                    ON CONFLICT (object_id) DO NOTHING;
+                    """,
+                    new { objectId },
+                    transaction,
+                    cancellationToken: cancellationToken));
+            }
+
+            var deleted = await connection.ExecuteAsync(new CommandDefinition(
+                """
+                DELETE FROM christmas_list_items
+                WHERE id = @itemId AND user_id = @ownerUserId;
+                """,
+                new { itemId, ownerUserId },
+                transaction,
+                cancellationToken: cancellationToken));
+            if (deleted != 1)
+            {
+                throw new InvalidOperationException("The list item could not be removed.");
+            }
+
+            await transaction.CommitAsync(cancellationToken);
+            return (IReadOnlyList<string>)objectIds.ToArray();
+        });
+    }
+
+    private sealed class PendingCompressionCleanup
+    {
+        public string SourceObjectId { get; set; } = "";
+        public string ExpectedContentType { get; set; } = "";
+        public string? CompressedObjectId { get; set; }
+    }
 }
 
 public sealed class ChristmasListItemRow

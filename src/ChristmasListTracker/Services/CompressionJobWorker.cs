@@ -5,6 +5,7 @@ namespace ChristmasListTracker.Services;
 
 public sealed class CompressionJobWorker(
     CompressionJobRepository repository,
+    R2ObjectDeletionJobRepository deletionJobs,
     R2StorageService storage,
     ImageCompressionService imageCompression,
     ILogger<CompressionJobWorker> logger) : BackgroundService
@@ -17,6 +18,13 @@ public sealed class CompressionJobWorker(
         {
             try
             {
+                var objectId = await deletionJobs.ClaimNextAsync(stoppingToken);
+                if (objectId is not null)
+                {
+                    await ProcessObjectDeletionAsync(objectId, stoppingToken);
+                    continue;
+                }
+
                 var job = await repository.ClaimNextAsync(stoppingToken);
                 if (job is null)
                 {
@@ -63,7 +71,11 @@ public sealed class CompressionJobWorker(
                 var compressedImage = await imageCompression.CompressAsync(input, cancellationToken);
                 var compressedObjectId = $"compressed/{job.ItemId:N}.{compressedImage.Extension}";
                 await storage.UploadAsync(compressedObjectId, compressedImage, cancellationToken);
-                await repository.PromoteToCompressedAsync(job, compressedObjectId, cancellationToken);
+                var promoted = await repository.PromoteToCompressedAsync(job, compressedObjectId, cancellationToken);
+                if (!promoted)
+                {
+                    await deletionJobs.EnqueueAsync(compressedObjectId, cancellationToken);
+                }
             }
             catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
             {
@@ -75,6 +87,20 @@ public sealed class CompressionJobWorker(
                     cancellationToken);
             }
         });
+    }
+
+    private async Task ProcessObjectDeletionAsync(string objectId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await storage.DeleteAsync(objectId, cancellationToken);
+            await deletionJobs.MarkDeletedAsync(objectId, cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            logger.LogError(exception, "R2 object deletion will be retried for {ObjectId}.", objectId);
+            await deletionJobs.RetryAsync(objectId, exception.Message, cancellationToken);
+        }
     }
 
     private async Task ProcessCleanupAsync(CompressionJob job, CancellationToken cancellationToken)

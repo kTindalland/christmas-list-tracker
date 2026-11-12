@@ -35,6 +35,7 @@ if (string.IsNullOrWhiteSpace(connectionString))
 builder.Services.AddSingleton(NpgsqlDataSource.Create(connectionString));
 builder.Services.AddSingleton<ListRepository>();
 builder.Services.AddSingleton<CompressionJobRepository>();
+builder.Services.AddSingleton<R2ObjectDeletionJobRepository>();
 builder.Services.AddSingleton<ImageCompressionService>();
 builder.Services.AddSingleton<R2StorageService>();
 builder.Services.AddScoped<ChristmasListService>();

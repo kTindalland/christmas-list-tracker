@@ -4,7 +4,9 @@ namespace ChristmasListTracker.Services;
 
 public sealed class ChristmasListService(
     ListRepository repository,
-    R2StorageService storage)
+    R2StorageService storage,
+    R2ObjectDeletionJobRepository deletionJobs,
+    ILogger<ChristmasListService> logger)
 {
     public Task<IReadOnlyList<FamilyUser>> GetUsersAsync(CancellationToken cancellationToken = default) =>
         ApplicationTelemetry.TrackAsync(
@@ -38,4 +40,39 @@ public sealed class ChristmasListService(
         ApplicationTelemetry.TrackAsync(
             "christmas_list.item.purchase.update",
             () => repository.SetPurchasedAsync(itemId, viewerUserId, purchased, cancellationToken));
+
+    public async Task<DeleteListItemResult?> DeleteItemAsync(
+        Guid itemId,
+        Guid ownerUserId,
+        CancellationToken cancellationToken = default)
+    {
+        return await ApplicationTelemetry.TrackAsync("christmas_list.item.delete", async () =>
+        {
+            var objectIds = await repository.DeleteItemAsync(itemId, ownerUserId, cancellationToken);
+            if (objectIds is null)
+            {
+                return null;
+            }
+
+            var cleanupPending = false;
+            foreach (var objectId in objectIds)
+            {
+                try
+                {
+                    await storage.DeleteAsync(objectId, cancellationToken);
+                    await deletionJobs.MarkDeletedAsync(objectId, cancellationToken);
+                }
+                catch (Exception exception) when (
+                    exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+                {
+                    cleanupPending = true;
+                    logger.LogError(exception, "R2 cleanup is pending for deleted list item object {ObjectId}.", objectId);
+                }
+            }
+
+            return new DeleteListItemResult(cleanupPending);
+        });
+    }
 }
+
+public sealed record DeleteListItemResult(bool ImageCleanupPending);

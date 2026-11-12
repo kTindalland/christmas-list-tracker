@@ -53,7 +53,7 @@ public sealed class CompressionJobRepository(NpgsqlDataSource dataSource)
             new CommandDefinition(sql, cancellationToken: cancellationToken));
     }
 
-    public async Task PromoteToCompressedAsync(
+    public async Task<bool> PromoteToCompressedAsync(
         CompressionJob job,
         string compressedObjectId,
         CancellationToken cancellationToken)
@@ -77,7 +77,7 @@ public sealed class CompressionJobRepository(NpgsqlDataSource dataSource)
         if (jobUpdated != 1)
         {
             await transaction.RollbackAsync(cancellationToken);
-            return;
+            return false;
         }
 
         await connection.ExecuteAsync(new CommandDefinition(
@@ -91,6 +91,7 @@ public sealed class CompressionJobRepository(NpgsqlDataSource dataSource)
             transaction,
             cancellationToken: cancellationToken));
         await transaction.CommitAsync(cancellationToken);
+        return true;
     }
 
     public async Task MarkCompletedAsync(Guid itemId, CancellationToken cancellationToken)

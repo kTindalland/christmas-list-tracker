@@ -29,6 +29,8 @@ Do not use it to store sensitive information.
   list to browse.
 - A list item is a screenshot image. Each uploaded image creates one item.
 - Users can select and upload multiple images in one operation.
+- An owner can remove an item from their own list. Removing it also deletes its
+  associated R2 images; failed storage cleanup is retried from a durable queue.
 - On the owner's list, do not display whether an item has been purchased or
   who purchased it.
 - On another user's list, show whether each item has been purchased and, when
@@ -210,5 +212,7 @@ all migration files present:
    purchased, and see the purchaser's name and purchase status.
 5. The owner of a list cannot see purchase status or purchaser identity for
    items on their own list.
-6. The Add button appears at the bottom of the list, is rectangular and wide,
-   and has centered "Add" text; the layout remains usable on a phone.
+6. The Add button remains fixed at the bottom of the viewport, is rectangular
+   and wide, and has centered "Add" text; the layout remains usable on a phone.
+7. An owner can filter another user's list to items not yet bought and remove
+   items from their own list.

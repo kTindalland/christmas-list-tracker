@@ -25,6 +25,10 @@ select {
     margin: 0 auto;
 }
 
+.list-page-with-add {
+    padding-bottom: calc(8rem + env(safe-area-inset-bottom));
+}
+
 .list-heading {
     margin-bottom: 1.25rem;
 }
@@ -60,6 +64,24 @@ h1 {
     min-height: 3rem;
     padding: 0.65rem 2.5rem 0.65rem 0.8rem;
     width: 100%;
+}
+
+.filter-toggle {
+    align-items: center;
+    background: white;
+    border: 1px solid #e0e5df;
+    border-radius: 0.65rem;
+    display: flex;
+    gap: 0.65rem;
+    margin-top: 0.75rem;
+    min-height: 3rem;
+    padding: 0.5rem 0.8rem;
+}
+
+.filter-toggle input {
+    accent-color: #1c684a;
+    height: 1.25rem;
+    width: 1.25rem;
 }
 
 .welcome-panel {
@@ -130,6 +152,32 @@ h1 {
     padding: 0.75rem;
 }
 
+.owner-actions {
+    border-top: 1px solid #e7ebe7;
+    display: flex;
+    justify-content: flex-end;
+    padding: 0.55rem 0.75rem;
+}
+
+.remove-button {
+    background: white;
+    border: 1px solid #d7b4ad;
+    border-radius: 0.5rem;
+    color: #8d291b;
+    cursor: pointer;
+    min-height: 2.5rem;
+    padding: 0.4rem 0.75rem;
+}
+
+.remove-button:hover:not(:disabled) {
+    background: #fff0ed;
+}
+
+.remove-button:disabled {
+    cursor: wait;
+    opacity: 0.65;
+}
+
 .purchase-row label {
     align-items: center;
     display: inline-flex;
@@ -168,6 +216,18 @@ h1 {
     outline-offset: 3px;
 }
 
+.add-action-bar {
+    background: rgba(246, 247, 243, 0.97);
+    bottom: 0;
+    box-shadow: 0 -0.5rem 1.5rem rgba(24, 53, 43, 0.08);
+    box-sizing: border-box;
+    left: 0;
+    padding: 0.65rem 1rem calc(0.85rem + env(safe-area-inset-bottom));
+    position: fixed;
+    right: 0;
+    z-index: 20;
+}
+
 .add-button {
     align-items: center;
     background: #1c684a;
@@ -179,7 +239,7 @@ h1 {
     font-size: 1.05rem;
     font-weight: 700;
     justify-content: center;
-    margin: 1.5rem auto 0;
+    margin: 0 auto;
     min-height: 3.75rem;
     text-align: center;
     width: min(100%, 580px);
@@ -197,6 +257,10 @@ h1 {
 .upload-hint {
     margin: 0.55rem auto 0;
     text-align: center;
+}
+
+.add-action-bar .upload-hint {
+    margin: 0 auto 0.5rem;
 }
 
 .notice {
